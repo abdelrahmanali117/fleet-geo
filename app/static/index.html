@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dubai Fleet · MongoDB Geospatial</title>
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
+<link rel="stylesheet" href="/static/vendor/leaflet-geoman.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="#00ED64" d="M12.3 1.5c-.1-.3-.5-.3-.6 0C10 5 6.3 7.8 6.3 13.1c0 4.3 3.1 7.1 5.1 8l.3 1.9h.9l.3-1.9c2-.9 5.1-3.7 5.1-8 0-5.3-3.9-8.1-5.7-11.6z"/></svg>
+    <div><b>Dubai Fleet</b><span>Land + sea · one MongoDB collection</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kgroup"><span class="kg">Road</span>
+      <div class="kpi"><b id="k-total">–</b><span>trucks</span></div>
+      <div class="kpi moving"><b id="k-moving">–</b><span>moving</span></div>
+      <div class="kpi loading"><b id="k-loading">–</b><span>loading</span></div>
+      <div class="kpi idle"><b id="k-idle">–</b><span>idle</span></div>
+      <div class="kpi maintenance opt"><b id="k-maintenance">–</b><span>workshop</span></div>
+      <div class="kpi offline opt"><b id="k-offline">–</b><span>offline</span></div>
+    </div>
+    <div class="kgroup sea"><span class="kg">Sea</span>
+      <div class="kpi"><b id="k-vessels">–</b><span>vessels</span></div>
+      <div class="kpi underway"><b id="k-underway">–</b><span>under way</span></div>
+      <div class="kpi anchored"><b id="k-anchored">–</b><span>at anchor</span></div>
+      <div class="kpi moored"><b id="k-moored">–</b><span>moored</span></div>
+      <div class="kpi dark"><b id="k-dark">–</b><span>dark</span></div>
+    </div>
+    <div class="kpi alert"><b id="k-alerts">0</b><span>alerts</span></div>
+  </div>
+  <div class="live" id="live"><i></i><span id="live-text">connecting…</span></div>
+</header>
+
+<aside id="panel">
+  <nav class="tabs">
+    <button data-tab="search" class="active">Search</button>
+    <button data-tab="near">Nearest</button>
+    <button data-tab="zones">Fences</button>
+    <button data-tab="sea">Maritime</button>
+    <button data-tab="history">History</button>
+    <button data-tab="model">Model</button>
+  </nav>
+
+  <!-- SEARCH -->
+  <section id="tab-search" class="tab active">
+    <div class="group">
+      <label class="lbl">Draw a search area</label>
+      <div class="tools">
+        <button data-draw="Polygon" title="Polygon">⬠<span>Polygon</span></button>
+        <button data-draw="Rectangle" title="Rectangle">▭<span>Box</span></button>
+        <button data-draw="Circle" title="Circle">◯<span>Radius</span></button>
+        <button data-draw="Line" title="Route corridor">〰<span>Corridor</span></button>
+        <button id="clear-shape" class="ghost" title="Clear">✕<span>Clear</span></button>
+      </div>
+      <div id="corridor-row" class="row hidden">
+        <span>Corridor width</span><input type="range" id="corridor-w" min="200" max="5000" step="100" value="800"><b id="corridor-wv">800 m</b>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="lbl">Quick scenarios</label>
+      <div class="scenarios">
+        <button data-scn="port-picture" class="both">⚓🚚 Jebel Ali port: trucks + ships</button>
+        <button data-scn="hazmat-landsea" class="both">⚠ Hazmat on land &amp; sea (16 km)</button>
+        <button data-scn="anchorage" class="sea">⚓ Ships waiting at anchorage</button>
+        <button data-scn="dhows" class="sea">⛵ Dhows on the Khasab route</button>
+        <button data-scn="reefer-port">Reefers inside Jebel Ali Port</button>
+        <button data-scn="hazmat-dxb">Hazmat within 5 km of DXB</button>
+        <button data-scn="lowfuel-e311">Low fuel along E311 corridor</button>
+        <button data-scn="ban">Heavy trucks in the ban zone</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="lbl">Filters <small>(one $match with the geo query)</small></label>
+      <div class="chips" id="f-kinds"></div>
+      <div class="chips" id="f-types"></div>
+      <div class="chips" id="f-status"></div>
+      <div class="row"><span>Fuel ≤</span><input type="range" id="f-fuel" min="5" max="100" step="5" value="100"><b id="f-fuelv">any</b></div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="f-hazmat"><i></i>Hazmat only</label>
+        <label class="switch"><input type="checkbox" id="f-live" checked><i></i>Live refresh</label>
+      </div>
+    </div>
+
+    <div id="results" class="group hidden">
+      <div class="cards c4">
+        <div class="card"><b id="r-count">0</b><span>in area</span></div>
+        <div class="card"><b id="r-trucks">0</b><span>trucks</span></div>
+        <div class="card sea"><b id="r-vessels">0</b><span>vessels</span></div>
+        <div class="card sea"><b id="r-teu">0</b><span>TEU at sea</span></div>
+        <div class="card"><b id="r-tonnes">0</b><span>road cargo t</span></div>
+        <div class="card danger"><b id="r-haz">0</b><span>hazmat</span></div>
+        <div class="card warn"><b id="r-low">0</b><span>fuel &lt; 15%</span></div>
+        <div class="card"><b id="r-ms">–</b><span>query ms</span></div>
+      </div>
+      <div id="r-types" class="bars"></div>
+      <div id="r-touch" class="touch"></div>
+      <div class="list" id="r-list"></div>
+    </div>
+    <p id="search-hint" class="hint">Draw a shape on the map. Every edit re-runs one <code>$geoWithin</code> aggregation over trucks <i>and</i> vessels, stored in the same <code>vehicles</code> collection.</p>
+  </section>
+
+  <!-- NEAR -->
+  <section id="tab-near" class="tab">
+    <div class="group">
+      <p class="hint">Click anywhere on the map to drop a pin: a breakdown, a pickup, a berth. <code>$geoNear</code> returns results sorted by distance.</p>
+      <div class="row"><span>Find</span>
+        <select id="n-target">
+          <option value="trucks">Trucks</option>
+          <option value="vessels">Vessels</option>
+          <option value="depots">Fuel / service depots</option>
+        </select>
+      </div>
+      <div class="row" id="n-type-row"><span>Type</span><select id="n-type"></select></div>
+      <div class="row" id="n-status-row"><span>Status</span><select id="n-status"></select></div>
+      <div class="row"><span>How many</span><input type="range" id="n-limit" min="1" max="20" value="5"><b id="n-limitv">5</b></div>
+      <div class="row"><span>Max distance</span><input type="range" id="n-max" min="1" max="60" value="25"><b id="n-maxv">25 km</b></div>
+    </div>
+    <div id="n-title" class="lbl" style="margin-top:10px"></div>
+    <div class="list" id="n-list"></div>
+  </section>
+
+  <!-- ZONES -->
+  <section id="tab-zones" class="tab">
+    <div class="group">
+      <label class="lbl">Create a geofence</label>
+      <p class="hint">Draw a polygon, box or circle, name it and save. The simulator checks every geofence each tick with an indexed <code>$geoWithin</code>. Entries and exits come back here through a <b>change stream</b>. Zone rules are data too (<code>applies_to</code>, <code>max_speed_kn</code>, <code>ban_hours</code>).</p>
+      <div class="row"><input id="z-name" placeholder="e.g. Customer DC - Al Quoz"><button id="z-save" class="primary">Save shape</button></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Geofences <small>inside now, live</small></label>
+      <div id="z-list" class="zlist"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Event feed
+        <label class="switch small"><input type="checkbox" id="e-all"><i></i>include enter/exit</label>
+      </label>
+      <div id="e-list" class="feed"></div>
+    </div>
+  </section>
+
+  <!-- MARITIME -->
+  <section id="tab-sea" class="tab">
+    <div class="group">
+      <label class="lbl">Port operations <small>vessel fields, same collection</small></label>
+      <div class="cards c3">
+        <div class="card sea"><b id="m-underway">–</b><span>under way</span></div>
+        <div class="card" style="--c:var(--anchored)"><b id="m-anchored" style="color:var(--anchored)">–</b><span>at anchor</span></div>
+        <div class="card"><b id="m-moored" style="color:var(--moored)">–</b><span>moored</span></div>
+        <div class="card danger"><b id="m-dark">–</b><span>AIS dark</span></div>
+        <div class="card"><b id="m-wait">–</b><span>avg anchorage wait</span></div>
+        <div class="card sea"><b id="m-teu">–</b><span>TEU inbound</span></div>
+      </div>
+      <div class="row" style="flex-wrap:wrap">
+        <button id="m-query" class="ghost">Show the query</button>
+        <button id="m-anchzone" class="ghost">Select anchorage</button>
+        <button id="m-vessels" class="ghost">Vessels-only filter</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="lbl">Anchorage queue · Jebel Ali <small>$dateDiff on voyage.anchored_since</small></label>
+      <div id="m-anch" class="list scroll"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Inbound <small>sorted by voyage.eta</small></label>
+      <div id="m-in" class="list scroll"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Berth occupancy</label>
+      <div id="m-berths"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">AIS dark vessels <small>partial index on ais.last_msg</small></label>
+      <div id="m-darklist" class="list"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Maritime alerts</label>
+      <p class="hint">Harbour speeding (zone rule <code>max_speed_kn</code>), protected-zone entry, AIS gaps, and close-quarters situations (<code>$geoNear</code> between vessels under way).</p>
+      <div id="m-feed" class="feed"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="tab">
+    <div class="group">
+      <label class="lbl">Heatmap <small>time-series collection</small></label>
+      <div class="row"><span>Window</span>
+        <select id="h-min"><option value="10">10 min</option><option value="30" selected>30 min</option><option value="60">1 hour</option><option value="180">3 hours</option></select>
+      </div>
+      <div class="row"><span>Show</span>
+        <select id="h-kind"><option value="">Trucks + vessels</option><option value="truck">Trucks only</option><option value="vessel">Vessels only (shipping lanes)</option></select>
+      </div>
+      <div class="row"><span>Metric</span>
+        <select id="h-metric"><option value="density">Density</option><option value="slow">Road congestion (speed &lt; 25 km/h)</option></select>
+      </div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="h-shape"><i></i>Only inside drawn area</label>
+      </div>
+      <div class="row"><button id="h-run" class="primary">Show heatmap</button><button id="h-clear" class="ghost">Hide</button></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Replay</label>
+      <div class="row"><span>Last</span>
+        <select id="p-min"><option value="5">5 min</option><option value="10" selected>10 min</option><option value="30">30 min</option></select>
+        <button id="p-load" class="primary">Load replay</button>
+      </div>
+      <div id="p-ctrl" class="hidden">
+        <div class="row"><button id="p-play" class="round">▶</button><input type="range" id="p-slider" min="0" max="0" value="0"><b id="p-time">–</b></div>
+        <div class="row"><button id="p-exit" class="ghost">Back to live</button><span id="p-info" class="muted"></span></div>
+      </div>
+      <p class="hint">Replay groups telemetry into frames with <code>$dateTrunc</code> in one aggregation. Truck points carry <code>speed</code> + <code>fuel</code>, vessel points carry <code>speed_kn</code>: the time-series collection is flexible too.</p>
+    </div>
+  </section>
+
+  <!-- MODEL -->
+  <section id="tab-model" class="tab">
+    <div class="group">
+      <label class="lbl">One collection, many shapes</label>
+      <div id="d-counts"></div>
+      <div id="d-types" class="bars"></div>
+      <div class="row"><button id="d-compare" class="primary">Compare documents side by side</button></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Field coverage <button id="d-matrix-q" class="ghost tiny">query</button></label>
+      <p class="hint">Measured live by an aggregation over the collection: which fields each kind of document actually has. Shared fields power the common queries (geo, status, type); the rest is free per kind, or even per document.</p>
+      <div id="d-legend" class="legendrow"></div>
+      <div id="d-fields" class="matrix"></div>
+    </div>
+    <div class="group">
+      <label class="lbl">Flexible, but governed <button id="d-schema" class="ghost tiny">$jsonSchema</button></label>
+      <div id="d-validator"></div>
+      <div class="tryrow">
+        <button id="d-yacht" class="primary">Insert a superyacht (new type)</button>
+        <button id="d-invalid" class="ghost danger">Insert vessel without MMSI</button>
+        <button id="d-unyacht" class="ghost">Remove superyacht</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="lbl">Indexes <small>one 2dsphere for all kinds + partial indexes for vessels</small></label>
+      <div id="d-indexes"></div>
+    </div>
+  </section>
+</aside>
+
+<main id="map"></main>
+
+<div id="legend">
+  <div><span class="lt">Road</span>
+  <span><i style="background:var(--moving)"></i>moving</span>
+  <span><i style="background:var(--loading)"></i>loading</span>
+  <span><i style="background:var(--idle)"></i>idle</span>
+  <span><i style="background:var(--maintenance)"></i>workshop</span>
+  <span><i style="background:var(--offline)"></i>offline</span></div>
+  <div><span class="lt">Sea</span>
+  <span><b class="tri" style="color:var(--underway)">▲</b>under way</span>
+  <span><b class="tri" style="color:var(--anchored)">▲</b>anchored</span>
+  <span><b class="tri" style="color:var(--moored)">▲</b>moored</span>
+  <span><b class="tri" style="color:var(--dark)">▲</b>dark</span></div>
+</div>
+
+<section id="inspector" class="collapsed">
+  <header>
+    <button id="i-toggle" title="Toggle">▴</button>
+    <b>Query inspector</b>
+    <span id="i-sum" class="muted">Run a query to see the MQL</span>
+    <div class="seg"><button data-view="mql" class="active">MQL</button><button data-view="shell">mongosh</button></div>
+    <button id="i-copy" class="ghost">Copy</button>
+    <button id="i-explain" class="ghost" title="Compare 2dsphere index vs collection scan">Explain</button>
+  </header>
+  <div id="i-explain-out" class="hidden"></div>
+  <pre id="i-code"></pre>
+</section>
+
+<div id="modal" class="hidden">
+  <div class="modal-card">
+    <header>
+      <b>Same collection, different documents</b>
+      <select id="c-left"></select><span class="muted">vs</span><select id="c-right"></select>
+      <button id="c-shuffle" class="ghost">Another sample</button>
+      <button id="c-close" class="ghost">✕</button>
+    </header>
+    <div id="c-stats" class="legendrow"></div>
+    <div class="docs"><pre id="c-a"></pre><pre id="c-b"></pre></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/vendor/leaflet-geoman.min.js"></script>
+<script src="/static/vendor/leaflet-heat.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
